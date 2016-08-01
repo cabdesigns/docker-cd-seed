@@ -1,0 +1,37 @@
+machine:
+  environment:
+    CLOUD_PROJECT_NAME: really-cool-project
+    PROJECT_NAME: really-cool-project/master
+    CLUSTER_NAME: really-cool-cluster
+    CLOUDSDK_COMPUTE_ZONE: europe-west1-b
+    CONTAINER_NAME: really-cool-container
+    CONTAINER_REGISTRY: eu.gcr.io
+    DEBIAN_FRONTEND: noninteractive
+  services:
+    - docker
+
+dependencies:
+  pre:
+    - sudo /opt/google-cloud-sdk/bin/gcloud --quiet components update
+    - sudo /opt/google-cloud-sdk/bin/gcloud --quiet components update kubectl
+    - echo $GCLOUD_SERVICE_KEY | base64 --decode -i > ${HOME}/account-auth.json
+    - sudo /opt/google-cloud-sdk/bin/gcloud auth activate-service-account --key-file ${HOME}/account-auth.json
+    - sudo /opt/google-cloud-sdk/bin/gcloud config set project $CLOUD_PROJECT_NAME
+    - sudo /opt/google-cloud-sdk/bin/gcloud --quiet config set container/cluster $CLUSTER_NAME
+    # Reading the zone from the env var is not working so we set it here
+    - sudo /opt/google-cloud-sdk/bin/gcloud config set compute/zone ${CLOUDSDK_COMPUTE_ZONE}
+    - sudo /opt/google-cloud-sdk/bin/gcloud --quiet container clusters get-credentials $CLUSTER_NAME
+    - docker build -t ${CONTAINER_REGISTRY}/${PROJECT_NAME}:$CIRCLE_SHA1 .
+    - docker tag ${CONTAINER_REGISTRY}/${PROJECT_NAME}:$CIRCLE_SHA1 ${CONTAINER_REGISTRY}/${PROJECT_NAME}:latest
+
+test:
+  override:
+    - docker run --name ${CONTAINER_NAME} -d -p 8080:8080 ${CONTAINER_REGISTRY}/${PROJECT_NAME}:$CIRCLE_SHA1;
+    # This would be done by docker exec, however CircleCI has issues, hence the below workaround.
+    - sudo lxc-attach -n "$(docker inspect --format "{{.Id}}" '"${CONTAINER_NAME}"')" -- bash -c "cd /usr/src/app && npm run test"
+
+deployment:
+  prod:
+    branch: master
+    commands:
+      - ./deploy.sh
